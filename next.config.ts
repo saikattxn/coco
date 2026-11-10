@@ -15,7 +15,7 @@ const csp = [
   "base-uri 'self'",
   "form-action 'self'",
   "object-src 'none'",
-  ...((process.env.APP_URL ?? "").startsWith("https://") ? ["upgrade-insecure-requests"] : []),
+  ...((process.env.APP_URL ?? "").startsWith("https://") || process.env.VERCEL ? ["upgrade-insecure-requests"] : []),
 ].join("; ");
 
 const securityHeaders = [
