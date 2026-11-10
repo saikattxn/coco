@@ -5,6 +5,8 @@ Recommended: **Vercel** (app + cron) and a **managed PostgreSQL** in the UK/EU r
 ## 1. Database
 
 1. Create a Postgres 14+ database in a London/EU region. Use a connection string with `sslmode=require`. On serverless hosts use the provider's **pooled** connection string.
+   - **Supabase (current staging setup):** Vercel can't reach Supabase's IPv6-only direct connection, so use the IPv4 poolers from *Connect* in the Supabase dashboard: `DATABASE_URL` = transaction pooler (port **6543**) and `DIRECT_URL` = session pooler (port **5432**), both with user `postgres.<project-ref>`, ending `?sslmode=require&uselibpqcompat=true`. Set `DATABASE_POOL_MAX=1`.
+   - Row-level security is enabled on every table with no policies, and the `anon`/`authenticated` roles have no grants, so nothing is reachable through Supabase's public Data API. The app connects as the database owner.
 2. From your machine (or CI) with `DATABASE_URL` set:
    ```bash
    npx prisma migrate deploy
@@ -29,8 +31,8 @@ Until a service is configured the site keeps working and the dashboard shows it 
 
 1. Import the Git repository. Framework: Next.js. Node 22.
 2. Add environment variables (Production): everything in `.env.example` that applies, including `DATABASE_URL`, `APP_URL` (`https://cocotamarindhp27.co.uk`), `APP_SECRET` (`openssl rand -base64 48`), `CRON_SECRET`, and `ALLOW_INDEXING=1` **for production only**.
-3. The build reads the database (public pages are prerendered from it), so `DATABASE_URL` must be available at build time.
-4. Deploy. Cron jobs from `vercel.json` are created automatically and send the `CRON_SECRET` bearer token.
+3. The build command is `npm run vercel-build` (picked up automatically): it applies pending migrations, runs the idempotent seed (it never overwrites existing data), then builds. Public pages are prerendered from the database, so `DATABASE_URL` and `DIRECT_URL` must be available at build time.
+4. Deploy. Cron jobs from `vercel.json` are created automatically and send the `CRON_SECRET` bearer token. They run **once a day** so they work on the free Hobby plan (emails are also sent immediately after each action). On Pro you can tighten them: notifications `*/5 * * * *`, reminders `0 * * * *`.
 
 ## 4. Domain & HTTPS
 

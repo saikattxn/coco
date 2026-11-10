@@ -17,7 +17,8 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "playwright test",
-    "jobs:run": "tsx scripts/run-jobs.ts"
+    "jobs:run": "tsx scripts/run-jobs.ts",
+    "vercel-build": "prisma migrate deploy && tsx prisma/seed.ts && next build"
   },
   "dependencies": {
     "@fontsource-variable/cormorant-garamond": "^5.3.0",

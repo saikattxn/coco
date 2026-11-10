@@ -51,6 +51,6 @@ Require `Authorization: Bearer $CRON_SECRET`; `401` otherwise. Configured in `ve
 
 | Path | Schedule | Does |
 |---|---|---|
-| `GET /api/v1/cron/notifications` | every 5 min | Send queued / retry failed emails |
-| `GET /api/v1/cron/reminders` | hourly | Queue reminder emails, then send |
+| `GET /api/v1/cron/notifications` | daily 06:00 UTC (every 5 min on Pro) | Send queued / retry failed emails — emails are also sent immediately after each action |
+| `GET /api/v1/cron/reminders` | daily 10:00 UTC (hourly on Pro) | Queue reminder emails, then send |
 | `GET /api/v1/cron/maintenance` | daily 03:30 | Data retention and housekeeping |
