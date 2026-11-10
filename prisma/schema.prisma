@@ -1,0 +1,547 @@
+// Coco Tamarind — database schema
+// Conventions: cuid ids, money in integer pence, timestamps in UTC,
+// soft deletion (deletedAt) on records staff can "delete" from the dashboard.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────── Auth & RBAC ───────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  roleId       String
+  role         Role      @relation(fields: [roleId], references: [id])
+  active       Boolean   @default(true)
+  mfaSecret    String? // base32 TOTP secret, set once MFA is enabled
+  mfaEnabled   Boolean   @default(false)
+  lastLoginAt  DateTime?
+  failedLogins Int       @default(0)
+  lockedUntil  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions  Session[]
+  auditLogs AuditLog[]
+
+  @@index([roleId])
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  key         String           @unique // SUPER_ADMIN, MANAGER, RESERVATIONS, CONTENT
+  name        String
+  description String?
+  users       User[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  key         String           @unique // e.g. "reservations.write"
+  description String
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique // sha256 of the cookie token
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mfaPassed  Boolean  @default(false)
+  expiresAt  DateTime
+  lastSeenAt DateTime @default(now())
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ─────────────────────────────── Customers ───────────────────────────────
+
+model Customer {
+  id                 String    @id @default(cuid())
+  email              String    @unique // stored lower-case
+  name               String
+  phone              String
+  marketingConsent   Boolean   @default(false)
+  marketingConsentAt DateTime?
+  consentSource      String? // e.g. "booking-form", "admin"
+  notes              String? // internal, staff-only
+  anonymisedAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  reservations Reservation[]
+
+  @@index([name])
+}
+
+// ─────────────────────────────── Reservations ───────────────────────────────
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum ReservationSource {
+  WEBSITE
+  PHONE
+  WALK_IN
+  STAFF
+}
+
+model SeatingArea {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  tables    Table[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Table {
+  id            String        @id @default(cuid())
+  label         String // e.g. "T4"
+  areaId        String
+  area          SeatingArea   @relation(fields: [areaId], references: [id])
+  minCovers     Int           @default(1)
+  maxCovers     Int
+  combinable    Boolean       @default(false) // may be joined with neighbours
+  joinGroup     String? // tables sharing a joinGroup may be combined
+  active        Boolean       @default(true)
+  sortOrder     Int           @default(0)
+  reservations  Reservation[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@unique([areaId, label])
+  @@index([active])
+}
+
+model Reservation {
+  id             String            @id @default(cuid())
+  reference      String            @unique // human-friendly e.g. CT-7KQ4M2
+  manageTokenHash String           @unique // sha256 of guest self-service token
+  customerId     String
+  customer       Customer          @relation(fields: [customerId], references: [id])
+  partySize      Int
+  startsAt       DateTime // UTC
+  endsAt         DateTime // UTC
+  serviceDate    DateTime          @db.Date // local (Europe/London) calendar date of the visit
+  status         ReservationStatus @default(PENDING)
+  source         ReservationSource @default(WEBSITE)
+  occasion       String?
+  specialRequests String?
+  staffNotes     String?
+  // primary table + any joined tables (for combined bookings)
+  tableId        String?
+  table          Table?            @relation(fields: [tableId], references: [id])
+  joinedTableIds String[]          @default([])
+  changeRequest  String? // guest-submitted modification request awaiting staff
+  confirmedAt    DateTime?
+  cancelledAt    DateTime?
+  cancelReason   String?
+  reminderSentAt DateTime?
+  createdById    String? // staff user for manual bookings
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  notifications Notification[]
+
+  @@index([serviceDate, status])
+  @@index([startsAt])
+  @@index([customerId])
+  @@index([tableId, startsAt])
+}
+
+enum ServicePeriod {
+  LUNCH
+  DINNER
+}
+
+model OpeningHours {
+  id        String        @id @default(cuid())
+  weekday   Int // 0 = Sunday … 6 = Saturday
+  period    ServicePeriod
+  opensAt   String // "12:00" local time
+  closesAt  String // "14:00" local time (last seating is derived from booking duration)
+  isClosed  Boolean       @default(false)
+  updatedAt DateTime      @updatedAt
+
+  @@unique([weekday, period])
+}
+
+model ClosureDate {
+  id        String   @id @default(cuid())
+  date      DateTime @unique @db.Date
+  reason    String
+  createdAt DateTime @default(now())
+}
+
+// Singleton row (id = "default")
+model BookingSettings {
+  id                    String   @id @default("default")
+  onlineBookingEnabled  Boolean  @default(true)
+  slotIntervalMinutes   Int      @default(15)
+  durationSmallMinutes  Int      @default(90) // parties up to 2
+  durationMediumMinutes Int      @default(105) // parties 3–4
+  durationLargeMinutes  Int      @default(120) // parties 5+
+  minPartySize          Int      @default(1)
+  maxOnlinePartySize    Int      @default(10) // larger parties are directed to the events enquiry
+  autoConfirmMaxParty   Int      @default(6) // larger online bookings are PENDING approval
+  maxCoversPerSlot      Int      @default(30) // kitchen pacing
+  leadTimeMinutes       Int      @default(60)
+  lastSeatingMinutesBeforeClose Int @default(30) // last start time = closing time minus this
+  maxDaysAhead          Int      @default(60)
+  reminderHoursBefore   Int      @default(24)
+  updatedAt             DateTime @updatedAt
+}
+
+// ─────────────────────────────── Menu ───────────────────────────────
+
+model MenuCategory {
+  id          String     @id @default(cuid())
+  slug        String     @unique
+  name        String
+  description String?
+  sortOrder   Int        @default(0)
+  visible     Boolean    @default(true)
+  items       MenuItem[]
+  deletedAt   DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([sortOrder])
+}
+
+model MenuItem {
+  id                   String            @id @default(cuid())
+  slug                 String            @unique
+  name                 String
+  description          String?
+  pricePence           Int
+  imageUrl             String?
+  imageAlt             String?
+  categoryId           String
+  category             MenuCategory      @relation(fields: [categoryId], references: [id])
+  spiceLevel           Int               @default(0) // 0 none, 1 medium, 2 hot, 3 fairly hot, 4 very hot
+  isVegetarian         Boolean           @default(false)
+  available            Boolean           @default(true)
+  featured             Boolean           @default(false) // signature / chef's recommendation
+  bestseller           Boolean           @default(false)
+  allergenInfoVerified Boolean           @default(false) // only verified data is shown as definitive
+  allergenNote         String? // free text as supplied (e.g. imported from ordering site)
+  sortOrder            Int               @default(0)
+  allergens            MenuItemAllergen[]
+  dietaryTags          MenuItemDietary[]
+  deletedAt            DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  @@index([categoryId, sortOrder])
+  @@index([featured])
+}
+
+// The 14 UK FIC allergens
+model Allergen {
+  id    String             @id @default(cuid())
+  key   String             @unique // "celery", "cereals_gluten", …
+  name  String
+  items MenuItemAllergen[]
+}
+
+model MenuItemAllergen {
+  itemId     String
+  allergenId String
+  item       MenuItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  allergen   Allergen @relation(fields: [allergenId], references: [id], onDelete: Cascade)
+
+  @@id([itemId, allergenId])
+}
+
+model DietaryTag {
+  id    String            @id @default(cuid())
+  key   String            @unique // "vegetarian", "vegan", "gluten_free"
+  name  String
+  items MenuItemDietary[]
+}
+
+model MenuItemDietary {
+  itemId String
+  tagId  String
+  item   MenuItem   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  tag    DietaryTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([itemId, tagId])
+}
+
+// ─────────────────────────────── Content ───────────────────────────────
+
+enum GalleryCategory {
+  FOOD
+  INTERIOR
+  BAR
+  DINING
+  OCCASIONS
+  EVENTS
+}
+
+model GalleryImage {
+  id        String          @id @default(cuid())
+  url       String
+  alt       String
+  caption   String?
+  category  GalleryCategory
+  width     Int?
+  height    Int?
+  sortOrder Int             @default(0)
+  published Boolean         @default(true)
+  deletedAt DateTime?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@index([category, sortOrder])
+}
+
+enum OfferType {
+  COLLECTION_DISCOUNT
+  SEASONAL
+  SPECIAL_MENU
+  CELEBRATION
+  MIDWEEK
+  LIMITED_TIME
+}
+
+model Offer {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  title       String
+  description String
+  type        OfferType
+  imageUrl    String?
+  imageAlt    String?
+  startsAt    DateTime?
+  endsAt      DateTime?
+  terms       String
+  active      Boolean   @default(true)
+  ctaLabel    String?
+  ctaUrl      String?
+  sortOrder   Int       @default(0)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([active, startsAt, endsAt])
+}
+
+// Editable copy blocks, keyed by page + section (e.g. "home.hero")
+model ContentBlock {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  title     String?
+  body      String? // plain text with blank-line paragraphs
+  data      Json? // structured extras (button labels, image urls…)
+  updatedById String?
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+// Singleton row (id = "default")
+model SiteSettings {
+  id                  String   @id @default("default")
+  restaurantName      String
+  tagline             String?
+  addressLine1        String
+  addressLine2        String?
+  town                String
+  county              String?
+  postcode            String
+  latitude            Float?
+  longitude           Float?
+  phonePrimary        String
+  phoneSecondary      String?
+  email               String
+  orderingUrl         String
+  orderingEnabled     Boolean  @default(true)
+  tripadvisorUrl      String?
+  googleReviewsUrl    String?
+  facebookUrl         String?
+  instagramUrl        String?
+  twitterUrl          String?
+  youtubeUrl          String?
+  parkingInfo         String?
+  hoursNote           String? // e.g. "Open bank holidays except Christmas Day"
+  footerNote          String?
+  seoTitle            String?
+  seoDescription      String?
+  updatedAt           DateTime @updatedAt
+}
+
+// Per-page SEO overrides
+model PageSeo {
+  id          String   @id @default(cuid())
+  path        String   @unique
+  title       String?
+  description String?
+  ogImageUrl  String?
+  updatedAt   DateTime @updatedAt
+}
+
+// ─────────────────────────────── Enquiries & marketing ───────────────────────────────
+
+enum EnquiryStatus {
+  NEW
+  IN_PROGRESS
+  RESPONDED
+  CLOSED
+  SPAM
+}
+
+model ContactEnquiry {
+  id            String        @id @default(cuid())
+  name          String
+  email         String
+  phone         String?
+  subject       String?
+  message       String
+  status        EnquiryStatus @default(NEW)
+  internalNotes String?
+  anonymisedAt  DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([status, createdAt])
+}
+
+enum EventType {
+  BIRTHDAY
+  ANNIVERSARY
+  FAMILY
+  CORPORATE
+  GROUP
+  PRIVATE
+  OTHER
+}
+
+model EventEnquiry {
+  id            String        @id @default(cuid())
+  name          String
+  email         String
+  phone         String
+  eventType     EventType
+  eventDate     DateTime      @db.Date
+  preferredTime String?
+  guests        Int
+  budgetNote    String?
+  message       String?
+  status        EnquiryStatus @default(NEW)
+  internalNotes String?
+  anonymisedAt  DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([status, createdAt])
+  @@index([eventDate])
+}
+
+model NewsletterSubscriber {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  name           String?
+  consentAt      DateTime  @default(now())
+  consentSource  String
+  unsubscribedAt DateTime?
+  unsubscribeTokenHash String @unique
+  createdAt      DateTime  @default(now())
+}
+
+// ─────────────────────────────── Notifications & audit ───────────────────────────────
+
+enum NotificationStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model Notification {
+  id             String             @id @default(cuid())
+  idempotencyKey String             @unique // prevents duplicate sends
+  template       String // "reservation.confirmed", …
+  channel        String             @default("email")
+  recipient      String
+  subject        String
+  payload        Json
+  status         NotificationStatus @default(QUEUED)
+  attempts       Int                @default(0)
+  lastError      String?
+  providerId     String? // message id from the email provider
+  nextAttemptAt  DateTime           @default(now())
+  sentAt         DateTime?
+  reservationId  String?
+  reservation    Reservation?       @relation(fields: [reservationId], references: [id])
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([reservationId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String // "reservation.confirm", "menu.update", …
+  entityType String
+  entityId   String?
+  summary    String
+  diff       Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@index([userId])
+}
+
+// First-party conversion counts (consent-independent, no personal data)
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  name      String // "order_click", "phone_click", "booking_started", …
+  path      String?
+  createdAt DateTime @default(now())
+
+  @@index([name, createdAt])
+}
+
+// Simple fixed-window rate limiting store
+model RateLimit {
+  key       String   @id
+  count     Int
+  resetAt   DateTime
+}

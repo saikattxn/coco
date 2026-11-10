@@ -1,26 +1,187 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-wine: #5a1724;
+  --color-wine-deep: #3a0e17;
+  --color-wine-soft: #7a2a38;
+  --color-cream: #f4ecdf;
+  --color-ivory: #fbf7f0;
+  --color-gold: #b8935a;
+  --color-gold-light: #d8bd88;
+  --color-ink: #2a2325;
+  --color-ink-soft: #5e5254;
+  --color-line: #e3d6c2;
+  --color-ok: #2f6b45;
+  --color-warn: #8a5a12;
+  --color-bad: #a32b2b;
+
+  --font-display: var(--font-cormorant), "Cormorant Garamond", Georgia, serif;
+  --font-sans: var(--font-manrope), "Manrope", system-ui, sans-serif;
+
+  --text-display: clamp(2.75rem, 1.6rem + 4.6vw, 5.25rem);
+  --text-display--line-height: 1.02;
+  --text-title: clamp(2rem, 1.4rem + 2.2vw, 3.1rem);
+  --text-title--line-height: 1.08;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+  body {
+    background: var(--color-cream);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.6;
+    text-rendering: optimizeLegibility;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-gold);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+  ::selection {
+    background: var(--color-gold-light);
+    color: var(--color-wine-deep);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  .wrap {
+    width: 100%;
+    max-width: 76rem;
+    margin-inline: auto;
+    padding-inline: 1.25rem;
+  }
+  @media (min-width: 768px) {
+    .wrap {
+      padding-inline: 2rem;
+    }
+  }
+  .prose-measure {
+    max-width: 38rem;
+  }
+
+  /* Buttons — one shape, three weights */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.875rem;
+    padding: 0.7rem 1.4rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    border-radius: 999px;
+    transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .btn-primary {
+    background: var(--color-wine);
+    color: var(--color-ivory);
+  }
+  .btn-primary:hover {
+    background: var(--color-wine-deep);
+  }
+  .btn-gold {
+    background: var(--color-gold-light);
+    color: var(--color-wine-deep);
+  }
+  .btn-gold:hover {
+    background: #e6d0a3;
+  }
+  .btn-outline {
+    border: 1px solid currentColor;
+    color: inherit;
+  }
+  .btn-outline:hover {
+    background: color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .btn[disabled],
+  .btn[aria-disabled="true"] {
+    opacity: 0.55;
+    pointer-events: none;
+  }
+
+  /* The jharokha arch — used for the hero window and story image */
+  /* Semicircular top: with a uniform frame padding the two curves stay parallel */
+  .arch {
+    border-radius: 9999px 9999px 0.25rem 0.25rem;
+    overflow: hidden;
+  }
+  .arch-frame {
+    position: relative;
+    padding: 0.6rem;
+    border: 1px solid color-mix(in srgb, var(--color-gold) 70%, transparent);
+    border-radius: 9999px 9999px 0.5rem 0.5rem;
+  }
+
+  /* Menu lines: name …… price */
+  .leader {
+    flex: 1;
+    border-bottom: 1px dotted color-mix(in srgb, var(--color-ink) 35%, transparent);
+    transform: translateY(-0.3em);
+    min-width: 1.5rem;
+  }
+
+  /* Forms */
+  .field-label {
+    display: block;
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 0.35rem;
+  }
+  .field {
+    width: 100%;
+    min-height: 2.875rem;
+    padding: 0.65rem 0.85rem;
+    background: var(--color-ivory);
+    border: 1px solid #cdbda5;
+    border-radius: 0.5rem;
+    color: var(--color-ink);
+    font: inherit;
+  }
+  .field:focus {
+    outline: 2px solid var(--color-gold);
+    outline-offset: 0;
+    border-color: var(--color-gold);
+  }
+  .field[aria-invalid="true"] {
+    border-color: var(--color-bad);
+  }
+  .field-error {
+    color: var(--color-bad);
+    font-size: 0.875rem;
+    margin-top: 0.3rem;
+  }
+  .field-hint {
+    color: var(--color-ink-soft);
+    font-size: 0.85rem;
+    margin-top: 0.3rem;
+  }
 }
