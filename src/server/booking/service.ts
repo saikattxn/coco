@@ -4,6 +4,7 @@ import type { Prisma, ReservationStatus } from "@/generated/prisma/client";
 import { appUrl } from "@/lib/env";
 import { dateOnly, dateOnlyIso, formatDateLong, formatTime12, londonDateIso, londonTime } from "@/lib/time";
 import { bookingReference, manageTokenFor, randomToken, sha256 } from "@/lib/tokens";
+import { getAppSecret } from "../secret";
 import type { ReservationInput } from "@/lib/validation";
 import { enqueueEmail } from "../notifications/outbox";
 import { audit } from "../audit";
@@ -73,8 +74,8 @@ export async function getAvailability(dateIso: string, partySize: number, opts: 
   return { slots, closed: slots.length === 0, message: slots.length === 0 ? "No times are available on this date." : undefined };
 }
 
-function emailPayload(r: { reference: string; partySize: number; startsAt: Date; occasion: string | null; specialRequests: string | null; customer: { name: string; email: string; phone: string } }, site: { restaurantName: string; addressLine1: string; town: string; postcode: string; phonePrimary: string }) {
-  const manageToken = manageTokenFor(r.reference);
+function emailPayload(r: { reference: string; partySize: number; startsAt: Date; occasion: string | null; specialRequests: string | null; customer: { name: string; email: string; phone: string } }, site: { restaurantName: string; addressLine1: string; town: string; postcode: string; phonePrimary: string }, secret: string) {
+  const manageToken = manageTokenFor(r.reference, secret);
   return {
     name: r.customer.name,
     email: r.customer.email,
@@ -111,6 +112,7 @@ export async function createReservation(
   input: ReservationInput & { email?: string },
   opts: { source?: "WEBSITE" | "PHONE" | "WALK_IN" | "STAFF"; staffUserId?: string; tableId?: string; status?: "PENDING" | "CONFIRMED"; staffNotes?: string; sendEmail?: boolean } = {},
 ) {
+  const secret = await getAppSecret();
   const staff = Boolean(opts.staffUserId);
   const email = (input.email || `no-email+${randomToken(6)}@placeholder.invalid`).toLowerCase();
 
@@ -176,7 +178,7 @@ export async function createReservation(
 
       let reference = bookingReference();
       while (await tx.reservation.findUnique({ where: { reference } })) reference = bookingReference();
-      const manageToken = manageTokenFor(reference);
+      const manageToken = manageTokenFor(reference, secret);
 
       const reservation = await tx.reservation.create({
         data: {
@@ -201,7 +203,7 @@ export async function createReservation(
       });
 
       const site = await siteInfo(tx);
-      const payload = emailPayload(reservation, site);
+      const payload = emailPayload(reservation, site, secret);
       const sendGuestEmail = Boolean(input.email) && (staff ? opts.sendEmail !== false : true);
       if (sendGuestEmail) {
         await enqueueEmail(tx, {
@@ -230,7 +232,7 @@ export async function createReservation(
     { timeout: 15_000 },
   );
 
-  return { reservation: result, manageToken: manageTokenFor(result.reference) };
+  return { reservation: result, manageToken: manageTokenFor(result.reference, secret) };
 }
 
 /** Same lunch/dinner service: starts within 4 hours of each other on the same day. */
@@ -253,6 +255,7 @@ export async function cancelByGuest(reference: string, token: string) {
 }
 
 export async function requestChangeByGuest(reference: string, token: string, message: string) {
+  const secret = await getAppSecret();
   const r = await findByManageToken(reference, token);
   if (!r) throw new BookingError("NOT_FOUND", "We couldn't find that booking.");
   if (!["PENDING", "CONFIRMED"].includes(r.status)) throw new BookingError("INVALID_STATUS", "This booking can't be changed online.");
@@ -263,7 +266,7 @@ export async function requestChangeByGuest(reference: string, token: string, mes
       key: `reservation:${r.id}:change-request:${sha256(message).slice(0, 12)}`,
       template: "admin.reservation",
       to: adminRecipient(site),
-      payload: { ...emailPayload(r, site), headline: "Guest requested a change", specialRequests: message },
+      payload: { ...emailPayload(r, site, secret), headline: "Guest requested a change", specialRequests: message },
       reservationId: r.id,
     });
     await audit({ action: "reservation.change_request", entityType: "Reservation", entityId: r.id, summary: `${r.reference}: guest requested a change` }, tx);
@@ -276,6 +279,7 @@ export async function changeStatus(
   to: ReservationStatus,
   opts: { userId?: string; reason?: string; guest?: boolean; notify?: boolean } = {},
 ) {
+  const secret = await getAppSecret();
   return db.$transaction(async (tx) => {
     const r = await tx.reservation.findUnique({ where: { id }, include: { customer: true } });
     if (!r) throw new BookingError("NOT_FOUND", "Reservation not found.");
@@ -305,7 +309,7 @@ export async function changeStatus(
     });
 
     const site = await siteInfo(tx);
-    const payload = { ...emailPayload(updated, site), cancelReason: opts.reason ?? null };
+    const payload = { ...emailPayload(updated, site, secret), cancelReason: opts.reason ?? null };
     const hasEmail = !updated.customer.email.endsWith("@placeholder.invalid");
     if (hasEmail && opts.notify !== false) {
       if (to === "CANCELLED")
@@ -333,6 +337,7 @@ export async function updateReservation(
   input: { date: string; time: string; partySize: number; tableId?: string; occasion?: string; specialRequests?: string; staffNotes?: string; clearChangeRequest?: boolean; notify?: boolean },
   userId: string,
 ) {
+  const secret = await getAppSecret();
   return db.$transaction(async (tx) => {
     const r = await tx.reservation.findUnique({ where: { id }, include: { customer: true } });
     if (!r) throw new BookingError("NOT_FOUND", "Reservation not found.");
@@ -371,7 +376,7 @@ export async function updateReservation(
     const hasEmail = !updated.customer.email.endsWith("@placeholder.invalid");
     if (timingChanged && hasEmail && input.notify !== false) {
       const site = await siteInfo(tx);
-      await enqueueEmail(tx, { key: `reservation:${id}:modified:${updated.updatedAt.getTime()}`, template: "reservation.modified", to: updated.customer.email, payload: emailPayload(updated, site), reservationId: id });
+      await enqueueEmail(tx, { key: `reservation:${id}:modified:${updated.updatedAt.getTime()}`, template: "reservation.modified", to: updated.customer.email, payload: emailPayload(updated, site, secret), reservationId: id });
     }
     await audit({ userId, action: "reservation.update", entityType: "Reservation", entityId: id, summary: `${r.reference} updated: ${input.date} ${input.time}, ${input.partySize} guests` }, tx);
     return updated;
@@ -380,6 +385,7 @@ export async function updateReservation(
 
 /** Queue reminders for confirmed bookings starting within the reminder window. Idempotent. */
 export async function queueReminders() {
+  const secret = await getAppSecret();
   const s = await db.bookingSettings.findUnique({ where: { id: "default" } });
   if (!s || s.reminderHoursBefore <= 0) return 0;
   const now = new Date();
@@ -392,7 +398,7 @@ export async function queueReminders() {
   for (const r of due) {
     if (r.customer.email.endsWith("@placeholder.invalid")) continue;
     await db.$transaction(async (tx) => {
-      await enqueueEmail(tx, { key: `reservation:${r.id}:reminder:${r.startsAt.getTime()}`, template: "reservation.reminder", to: r.customer.email, payload: emailPayload(r, site), reservationId: r.id });
+      await enqueueEmail(tx, { key: `reservation:${r.id}:reminder:${r.startsAt.getTime()}`, template: "reservation.reminder", to: r.customer.email, payload: emailPayload(r, site, secret), reservationId: r.id });
       await tx.reservation.update({ where: { id: r.id }, data: { reminderSentAt: now } });
     });
     count++;

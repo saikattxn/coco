@@ -60,11 +60,12 @@ export async function saveMenuItemAction(_: FormState, fd: FormData): Promise<Fo
     imageUrl,
     imageAlt: imageUrl ? d.imageAlt ?? null : null,
   };
+  const newSlug = id ? null : await uniqueSlug(d.name);
   const item = await db.$transaction(async (tx) => {
     const before = id ? await tx.menuItem.findUnique({ where: { id } }) : null;
     const saved = id
       ? await tx.menuItem.update({ where: { id }, data })
-      : await tx.menuItem.create({ data: { ...data, slug: await uniqueSlug(d.name), sortOrder: (await tx.menuItem.count({ where: { categoryId: d.categoryId } })) + 1 } });
+      : await tx.menuItem.create({ data: { ...data, slug: newSlug!, sortOrder: (await tx.menuItem.count({ where: { categoryId: d.categoryId } })) + 1 } });
     await tx.menuItemAllergen.deleteMany({ where: { itemId: saved.id } });
     if (d.allergens.length) await tx.menuItemAllergen.createMany({ data: d.allergens.map((allergenId) => ({ itemId: saved.id, allergenId })) });
     await tx.menuItemDietary.deleteMany({ where: { itemId: saved.id } });

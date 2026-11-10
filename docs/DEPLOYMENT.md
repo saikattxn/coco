@@ -5,7 +5,8 @@ Recommended: **Vercel** (app + cron) and a **managed PostgreSQL** in the UK/EU r
 ## 1. Database
 
 1. Create a Postgres 14+ database in a London/EU region. Use a connection string with `sslmode=require`. On serverless hosts use the provider's **pooled** connection string.
-   - **Supabase (current staging setup):** Vercel can't reach Supabase's IPv6-only direct connection, so use the IPv4 poolers from *Connect* in the Supabase dashboard: `DATABASE_URL` = transaction pooler (port **6543**) and `DIRECT_URL` = session pooler (port **5432**), both with user `postgres.<project-ref>`, ending `?sslmode=require&uselibpqcompat=true`. Set `DATABASE_POOL_MAX=1`.
+   - **Supabase via the Vercel integration (current staging setup):** connect the Supabase integration to the Vercel project and select the database. It injects `POSTGRES_PRISMA_URL` (pooled, used by the app) and `POSTGRES_URL_NON_POOLING` (used for migrations) — no passwords to copy.
+   - **Supabase, manual:** Vercel can't reach Supabase's IPv6-only direct connection, so use the IPv4 poolers from *Connect* in the Supabase dashboard: `DATABASE_URL` = transaction pooler (port **6543**) and `DIRECT_URL` = session pooler (port **5432**), both with user `postgres.<project-ref>`, ending `?sslmode=require&uselibpqcompat=true`. `DATABASE_POOL_MAX` defaults to 3 on Vercel.
    - Row-level security is enabled on every table with no policies, and the `anon`/`authenticated` roles have no grants, so nothing is reachable through Supabase's public Data API. The app connects as the database owner.
 2. From your machine (or CI) with `DATABASE_URL` set:
    ```bash

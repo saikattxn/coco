@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
+import { migrationUrl } from "./src/lib/database-url";
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
@@ -10,6 +11,6 @@ export default defineConfig({
   datasource: {
     // Migrations need a session connection. With a transaction pooler for the app (e.g. Supabase
     // port 6543), set DIRECT_URL to a session/direct connection; otherwise DATABASE_URL is used.
-    url: process.env.DIRECT_URL || process.env.DATABASE_URL || "",
+    url: migrationUrl(),
   },
 });

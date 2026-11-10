@@ -19,16 +19,7 @@ export function bookingReference(): string {
 
 import { createHmac } from "node:crypto";
 
-function appSecret(): string {
-  const s = process.env.APP_SECRET;
-  if (!s || s.length < 32) {
-    if (process.env.NODE_ENV === "production") throw new Error("APP_SECRET must be set (32+ characters).");
-    return "development-only-secret-change-me-0123456789";
-  }
-  return s;
-}
-
 /** Guest self-service token for a booking: derived, so every email can include the link. */
-export function manageTokenFor(reference: string): string {
-  return createHmac("sha256", appSecret()).update(`manage:${reference}`).digest("base64url").slice(0, 32);
+export function manageTokenFor(reference: string, secret: string): string {
+  return createHmac("sha256", secret).update(`manage:${reference}`).digest("base64url").slice(0, 32);
 }

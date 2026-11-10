@@ -539,6 +539,13 @@ model AnalyticsEvent {
   @@index([name, createdAt])
 }
 
+// Server-only key/value settings (e.g. a generated app secret when APP_SECRET isn't set)
+model AppConfig {
+  key       String   @id
+  value     String
+  createdAt DateTime @default(now())
+}
+
 // Simple fixed-window rate limiting store
 model RateLimit {
   key       String   @id
